@@ -1,7 +1,10 @@
 // compact vec to avoid allocation, in some cases
 // yeah I know there's already smallvec and tinyvec
+// I'd still argue this is better suited for domains
+// cvec is better than them at [u8; 63]
+// which can hold most domains, and guarantees to hold a label
 
-use std::num::NonZeroU8;
+use std::{fmt::Display, num::NonZeroU8};
 
 // since the usage of NonZero, len is internally presented +1
 const MAX_CAP: usize = NonZeroU8::MAX.get() as usize - 1;
@@ -13,12 +16,8 @@ pub enum CVec<T: Copy, const C: usize> {
 }
 
 impl<T: Copy + Default, const C: usize> CVec<T, C> {
-	fn inner_from_slice(v: &[T]) -> Self {
-		#[cfg(debug_assertions)]
-		assert!(v.len() <= C);
-		let mut a = [T::default(); C];
-		a[..v.len()].copy_from_slice(v);
-		Self::Int((a, unsafe { NonZeroU8::new_unchecked(v.len() as u8 + 1) }))
+	pub fn new() -> Self {
+		Self::Int(([T::default(); C], unsafe { NonZeroU8::new_unchecked(1) }))
 	}
 
 	pub fn len(&self) -> usize {
@@ -36,6 +35,15 @@ impl<T: Copy + Default, const C: usize> CVec<T, C> {
 		match self {
 			CVec::Int(_) => C,
 			CVec::Ext(v) => v.capacity(),
+		}
+	}
+
+	pub fn pop(&mut self) -> Option<T> {
+		match self {
+			CVec::Int((a, l)) => {
+				todo!()
+			}
+			CVec::Ext(v) => v.pop(),
 		}
 	}
 
@@ -73,6 +81,14 @@ impl<T: Copy + Default, const C: usize> CVec<T, C> {
 			Self::Ext(v) => v.extend_from_slice(s),
 		}
 	}
+
+	fn inner_from_slice(v: &[T]) -> Self {
+		#[cfg(debug_assertions)]
+		assert!(v.len() <= C);
+		let mut a = [T::default(); C];
+		a[..v.len()].copy_from_slice(v);
+		Self::Int((a, unsafe { NonZeroU8::new_unchecked(v.len() as u8 + 1) }))
+	}
 }
 
 impl<T: Copy, const C: usize> AsRef<[T]> for CVec<T, C> {
@@ -108,8 +124,8 @@ impl<T: Copy + Default, const C: usize> From<Vec<T>> for CVec<T, C> {
 	}
 }
 
-use std::hash::{Hash, Hasher};
 use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
 
 impl<T: Hash + Copy, const C: usize> Hash for CVec<T, C> {
 	fn hash<H: Hasher>(&self, state: &mut H) {
@@ -134,6 +150,17 @@ impl<T: PartialOrd + Copy, const C: usize> PartialOrd for CVec<T, C> {
 impl<T: Ord + Copy, const C: usize> Ord for CVec<T, C> {
 	fn cmp(&self, other: &Self) -> Ordering {
 		self.as_ref().cmp(other.as_ref())
+	}
+}
+
+impl<const C: usize> Display for CVec<u8, C> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let b = self.as_ref();
+		if let Ok(s) = str::from_utf8(b) {
+			write!(f, "{}", s)
+		} else {
+			todo!()
+		}
 	}
 }
 
@@ -255,7 +282,7 @@ mod tests {
 		for (i, c) in stats.iter().enumerate() {
 			acc += *c;
 			// if [15usize, 31, 39, 47, 55, 63].contains(&i) {
-			if *c > 0{
+			if *c > 0 {
 				println!(
 					"{:>3}, {:>6}, {:>7}, {:>5.1}%",
 					i,

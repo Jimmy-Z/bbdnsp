@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, UdpSocket};
 
-use dns::msg::{Msg, Resolver};
+use dns::msg::{Msg};
 
 fn main() -> std::io::Result<()> {
 
@@ -14,22 +14,23 @@ fn main() -> std::io::Result<()> {
 		println!("{len} bytes from {addr}");
 		if let Ok(mut msg) = Msg::try_from((&mut buf[..], len)) {
 			println!("{msg}");
-			let len = msg.response_with(Dummy());
-			if len > 0 {
-				println!("{len} bytes to {addr}");
-				let msg = Msg::try_from((&mut buf[..], len)).unwrap();
-				println!("{msg}");
-				d.send_to(&buf[..len], addr)?;
-			}
+			let _ = msg.get_query();
+			// let len = msg.response_with(Dummy());
+			// if len > 0 {
+			// 	println!("{len} bytes to {addr}");
+			// 	let msg = Msg::try_from((&mut buf[..], len)).unwrap();
+			// 	println!("{msg}");
+			// 	d.send_to(&buf[..len], addr)?;
+			// }
 		}
 	}
 }
 
 struct Dummy();
 
-impl Resolver for Dummy {
-	fn resolve(self, n: &str) -> Option<(Ipv4Addr, u32)> {
-		println!("\"{n}\"");
-		Some((Ipv4Addr::new(127, 25, 0, 1), 42))
-	}
-}
+// impl Resolver for Dummy {
+// 	fn resolve(self, n: &str) -> Option<(Ipv4Addr, u32)> {
+// 		println!("\"{n}\"");
+// 		Some((Ipv4Addr::new(127, 25, 0, 1), 42))
+// 	}
+// }

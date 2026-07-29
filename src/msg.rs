@@ -1,40 +1,54 @@
 use std::{fmt::Display, net::Ipv4Addr};
 
-use log::*;
+use log::{Level::Error, *};
 
 use super::*;
+
+pub enum ParseError {
+	UnkOpCode(OpCode),
+	Truncated,
+	FormErr,
+}
+
+type Result = std::result::Result<(Query, u16), ParseError>;
+
+const FORMERR: Result = Err(ParseError::FormErr);
+
+pub struct Query {
+	name: DName,
+	qtype: QType,
+	qclass: QClass,
+}
+
+impl Display for Query {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{} {} {}", self.name, self.qtype, self.qclass)
+	}
+}
 
 pub struct Msg<'a> {
 	msg: &'a mut [u8],
 	len: usize,
 }
 
-pub trait Resolver {
-	fn resolve(self, name: &str) -> Option<(Ipv4Addr, u32)>;
-}
-
 impl<'a> Msg<'a> {
-	// write response in-place
-	pub fn response_with(&mut self, resolver: impl Resolver) -> usize {
+	pub fn get_query(&mut self) -> Result {
 		// check headers
-		if self.opcode() != opcode::QUERY {
-			self.set_response();
-			self.set_rcode(rcode::NOTIMP);
-			return self.len;
+		let opcode = self.opcode();
+		if opcode != OpCode::QUERY {
+			return Err(ParseError::UnkOpCode(opcode));
 		}
 		if self.qd_count() < 1 {
-			self.set_response();
-			self.set_rcode(rcode::FORMERR);
-			return self.len;
+			return FORMERR;
 		}
 
 		// fqdn max len 255
-		let mut name = Vec::with_capacity(0x100);
+		let mut name = DName::new();
 		let mut offset = DNS_HEADER_LEN;
 		// parse name
 		loop {
 			if offset + 1 > self.len {
-				return 0;
+				return FORMERR;
 			}
 			let label_len = self.msg[offset] as usize;
 			if label_len == 0 {
@@ -42,62 +56,70 @@ impl<'a> Msg<'a> {
 				break;
 			}
 			if offset + 1 + label_len > self.len {
-				return 0;
+				return FORMERR;
 			}
 			name.extend_from_slice(&self.msg[offset + 1..offset + 1 + label_len]);
 			name.push(b'.');
 			offset += 1 + label_len;
 		}
 		if name.len() <= 1 {
-			return 0;
+			return FORMERR;
 		}
+		
 		// remove trailing dot
-		name.pop().unwrap();
+		// name.pop().unwrap();
 		// rust don't have a from_ascii
-		let Ok(name) = String::from_utf8(name).inspect_err(|e| error!("invalid name: {e}")) else {
-			self.set_response();
-			self.set_rcode(rcode::FORMERR);
-			return self.len;
+		if !name.as_ref().is_ascii() {
+			return FORMERR;
 		};
 		// QTYPE QCLASS
 		if offset + 4 > self.len {
-			return 0;
+			return FORMERR;
 		}
-		let qtype = u16be(&self.msg[offset..offset + 2]);
-		let qclass = u16be(&self.msg[offset + 2..offset + 4]);
+		let qtype = QType(u16be(&self.msg[offset..offset + 2]));
+		let qclass = QClass(u16be(&self.msg[offset + 2..offset + 4]));
 		offset += 4;
-		trace!("{} {} {}", name, qtype::to_str(qtype), qclass::to_str(qclass));
-		if qclass != qclass::IN || (qtype != qtype::A && qtype != qtype::AAAA) {
-			self.set_response();
-			self.set_rcode(rcode::NOTIMP);
-			return self.len;
-		}
-		if qtype == qtype::AAAA {
-			self.set_response_ra();
-			return self.len;
-		}
-		let Some((addr, ttl)) = resolver.resolve(&name) else {
-			// rfc says we shouldn't set Name Error since we're not authoritative
-			self.set_response_ra();
-			return self.len;
+		let q = Query {
+			name,
+			qtype,
+			qclass,
 		};
-		// start writing response
-		self.set_response_header(rcode::NOERROR, 1, 1, 0, 0);
-		// to do: check available buffer, shouldn't be a problem though
-		// rfc1034 4.1.4 message compression
-		// qname is conveniently always just after the header
-		let name: u16 = 0b1100_0000_0000_0000 | DNS_HEADER_LEN as u16;
-		self.msg[offset..offset + 2].copy_from_slice(&name.to_be_bytes());
-		self.msg[offset + 2..offset + 4].copy_from_slice(&qtype::A.to_be_bytes());
-		self.msg[offset + 4..offset + 6].copy_from_slice(&qclass::IN.to_be_bytes());
-		self.msg[offset + 6..offset + 10].copy_from_slice(&ttl.to_be_bytes());
-		self.msg[offset + 10..offset + 12].copy_from_slice(&4u16.to_be_bytes());
-		self.msg[offset + 12..offset + 16].copy_from_slice(&addr.octets());
-		offset += 16;
-
-		// length of the response
-		offset
+		debug!("{}", q);
+		Ok((q, offset as u16))
 	}
+
+	// pub fn answer() {
+	// 	if qclass != qclass::IN || (qtype != qtype::A && qtype != qtype::AAAA) {
+	// 		self.set_response();
+	// 		self.set_rcode(rcode::NOTIMP);
+	// 		return self.len;
+	// 	}
+	// 	if qtype == qtype::AAAA {
+	// 		self.set_response_ra();
+	// 		return self.len;
+	// 	}
+	// 	let Some((addr, ttl)) = resolver.resolve(&name) else {
+	// 		// rfc says we shouldn't set Name Error since we're not authoritative
+	// 		self.set_response_ra();
+	// 		return self.len;
+	// 	};
+	// 	// start writing response
+	// 	self.set_response_header(rcode::NOERROR, 1, 1, 0, 0);
+	// 	// to do: check available buffer, shouldn't be a problem though
+	// 	// rfc1034 4.1.4 message compression
+	// 	// qname is conveniently always just after the header
+	// 	let name: u16 = 0b1100_0000_0000_0000 | DNS_HEADER_LEN as u16;
+	// 	self.msg[offset..offset + 2].copy_from_slice(&name.to_be_bytes());
+	// 	self.msg[offset + 2..offset + 4].copy_from_slice(&qtype::A.to_be_bytes());
+	// 	self.msg[offset + 4..offset + 6].copy_from_slice(&qclass::IN.to_be_bytes());
+	// 	self.msg[offset + 6..offset + 10].copy_from_slice(&ttl.to_be_bytes());
+	// 	self.msg[offset + 10..offset + 12].copy_from_slice(&4u16.to_be_bytes());
+	// 	self.msg[offset + 12..offset + 16].copy_from_slice(&addr.octets());
+	// 	offset += 16;
+
+	// 	// length of the response
+	// 	offset
+	// }
 
 	fn set_response_header(&mut self, rcode: u8, qd: u16, an: u16, ns: u16, ar: u16) {
 		self.set_response_ra();
@@ -145,11 +167,11 @@ impl<'a> Msg<'a> {
 		self.get_flag(3, 6)
 	}
 
-	fn opcode(&self) -> u8 {
-		get_bits(self.msg[2], 3, 4)
+	fn opcode(&self) -> OpCode {
+		OpCode(get_bits(self.msg[2], 3, 4))
 	}
-	fn rcode(&self) -> u8 {
-		get_bits(self.msg[3], 0, 4)
+	fn rcode(&self) -> RCode {
+		RCode(get_bits(self.msg[3], 0, 4))
 	}
 
 	fn set_response(&mut self) {
@@ -163,19 +185,13 @@ impl<'a> Msg<'a> {
 	}
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-	Invalid,
-	Truncated,
-}
-
 impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 	type Error = ParseError;
-	fn try_from(msg: (&'a mut [u8], usize)) -> Result<Self, Self::Error> {
+	fn try_from(msg: (&'a mut [u8], usize)) -> std::result::Result<Self, Self::Error> {
 		let (msg, len) = msg;
 		if len < DNS_HEADER_LEN {
 			debug!("too short to contain a dns message: {len}");
-			return Err(ParseError::Invalid);
+			return Err(ParseError::FormErr);
 		}
 		// eprintln!("{:08b} {:08b}", msg[2], msg[3]);
 		let msg = Msg { msg, len };
@@ -183,24 +199,23 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 			return Err(ParseError::Truncated);
 		}
 		if msg.z() {
-			eprintln!("header: reserved bit is not zero");
+			debug!("header: reserved bit is not zero");
 		}
 		Ok(msg)
 	}
 }
 
-// mimics drill/dig output
+// just the header, mimics drill/dig output
 impl<'a> Display for Msg<'a> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		writeln!(
+		write!(
 			f,
-			";; ->>HEADER<<- opcode: {}, rcode: {}, id: {}",
-			opcode::to_str(self.opcode()),
-			rcode::to_str(self.rcode()),
+			";; ->>HEADER<<- opcode: {}, rcode: {}, id: {}\n;; flags:",
+			self.opcode(),
+			self.rcode(),
 			self.id()
 		)?;
-		write!(f, ";; flags:")?;
-		for &(o0, o1, name) in flags::LIST {
+		for &(o0, o1, name) in FLAGS {
 			if self.get_flag(o0, o1) {
 				write!(f, " {name}")?;
 			}
