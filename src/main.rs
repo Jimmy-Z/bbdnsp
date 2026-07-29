@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, UdpSocket};
 
-use dns::{Msg, Resolver};
+use dns::msg::{Msg, Resolver};
 
 fn main() -> std::io::Result<()> {
 
