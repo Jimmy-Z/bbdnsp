@@ -45,30 +45,31 @@ impl<'a> Msg<'a> {
 		// fqdn max len 255
 		let mut name = DName::new();
 		let mut offset = DNS_HEADER_LEN;
-		// parse name
+		if offset + 3 + 2 + 2 > self.len {
+			// technically shortest query: 3 + 2 + 2 bytes
+			// 1 byte length, 1 char, ending 0, qtype, qclass
+			// though in real world, tld has at least 2 chars
+			return FORMERR;
+		}
+		// name
 		loop {
-			if offset + 1 > self.len {
-				return FORMERR;
-			}
 			let label_len = self.msg[offset] as usize;
-			if label_len == 0 {
-				offset += 1;
-				break;
-			}
-			if offset + 1 + label_len > self.len {
+			if offset + 1 + label_len + 1 > self.len {
 				return FORMERR;
 			}
 			name.extend_from_slice(&self.msg[offset + 1..offset + 1 + label_len]);
-			name.push(b'.');
 			offset += 1 + label_len;
+			// peek next label len to prevent adding a trailing dot
+			if self.msg[offset] == 0 {
+				offset += 1;
+				break;
+			}
+			name.push(b'.');
 		}
 		if name.len() <= 1 {
 			return FORMERR;
 		}
-		
-		// remove trailing dot
-		// name.pop().unwrap();
-		// rust don't have a from_ascii
+
 		if !name.as_ref().is_ascii() {
 			return FORMERR;
 		};
@@ -76,15 +77,13 @@ impl<'a> Msg<'a> {
 		if offset + 4 > self.len {
 			return FORMERR;
 		}
-		let qtype = QType(u16be(&self.msg[offset..offset + 2]));
-		let qclass = QClass(u16be(&self.msg[offset + 2..offset + 4]));
-		offset += 4;
 		let q = Query {
 			name,
-			qtype,
-			qclass,
+			qtype: QType(u16be(&self.msg[offset..offset + 2])),
+			qclass: QClass(u16be(&self.msg[offset + 2..offset + 4])),
 		};
 		debug!("{}", q);
+		offset += 4;
 		Ok((q, offset as u16))
 	}
 
