@@ -1,12 +1,10 @@
-// compact vec to avoid allocation, in some cases
+// compact vec to avoid allocation, in most cases
 // yeah I know there's already smallvec and tinyvec
-// I'd still argue this is better suited for domains
-// cvec is better than them at [u8; 63]
-// which can hold most domains, and guarantees to hold a label
 
 use std::{fmt::Display, num::NonZeroU8};
 
 // since the usage of NonZero, len is internally presented +1
+#[cfg(debug_assertions)]
 const MAX_CAP: usize = NonZeroU8::MAX.get() as usize - 1;
 
 #[derive(Clone, Debug)]
@@ -16,7 +14,6 @@ pub enum CVec<T: Copy, const C: usize> {
 }
 
 impl<T: Copy + Default, const C: usize> CVec<T, C> {
-	#[allow(clippy::new_without_default)]
 	pub fn new() -> Self {
 		Self::Int(([T::default(); C], unsafe { NonZeroU8::new_unchecked(1) }))
 	}
@@ -122,6 +119,12 @@ impl<T: Copy + Default, const C: usize> From<Vec<T>> for CVec<T, C> {
 		} else {
 			Self::Ext(v)
 		}
+	}
+}
+
+impl<T: Copy + Default, const C: usize> Default for CVec<T, C> {
+	fn default() -> Self {
+		Self::new()
 	}
 }
 

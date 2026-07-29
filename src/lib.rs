@@ -4,16 +4,17 @@ use log::*;
 pub mod msg;
 pub mod cvec;
 
+use cvec::CVec;
 pub use msg::*;
 
 
-pub type DName = cvec::CVec<u8, 63>;
+pub type CVec63 = CVec<u8, 63>;
 // #[cfg(debug_assertions)]
 // assert_eq!(std::mem::size_of::<DName>(), 64);
 
-impl DName {
+impl<const C: usize> CVec<u8, C> {
 	pub fn txt(txt: &[&str]) -> Self {
-		let mut d = DName::new();
+		let mut d = CVec::new();
 		for &line in txt {
 			let mut len = line.len();
 			if len > u8::MAX as usize {

@@ -9,7 +9,7 @@ use super::*;
 
 pub const MSG_HEADER_LEN: usize = 12;
 // technically shortest query:
-// 1 byte length(0), qtype, qclass
+// 1 byte name (root), qtype, qclass
 pub const MSG_LEN_MIN: usize = MSG_HEADER_LEN + 1 + 2 + 2;
 
 pub const MSG_LEN_MAX: usize = 1232;
@@ -26,7 +26,7 @@ type Result = std::result::Result<Query, ParseError>;
 const FORMERR: Result = Err(ParseError::FormErr);
 
 pub struct Query {
-	pub name: DName,
+	pub name: CVec63,
 	pub qtype: QType,
 	pub qclass: QClass,
 }
@@ -48,7 +48,7 @@ pub struct Answer {
 pub enum RData {
 	A(Ipv4Addr),
 	AAAA(Ipv6Addr),
-	Bytes(DName),
+	Bytes(CVec63),
 }
 
 impl RData {
@@ -79,7 +79,7 @@ impl<'a> Msg<'a> {
 
 		let mut offset = MSG_HEADER_LEN;
 		// fqdn max len 255
-		let mut name = DName::new();
+		let mut name = CVec63::new();
 		// name
 		let mut label_len = self.msg[offset] as usize;
 		if label_len > 0 {
@@ -89,7 +89,7 @@ impl<'a> Msg<'a> {
 				}
 				name.extend_from_slice(&self.msg[offset + 1..offset + 1 + label_len]);
 				offset += 1 + label_len;
-				// peek next label len to prevent adding a trailing dot
+				// peek next label len to avoid the trailing dot
 				label_len = self.msg[offset] as usize;
 				if label_len == 0 {
 					offset += 1;
@@ -132,7 +132,7 @@ impl<'a> Msg<'a> {
 		}
 	}
 
-	pub fn inner_write_answer(&mut self, a: &Answer) {
+	fn inner_write_answer(&mut self, a: &Answer) {
 		// to do: check available buffer
 		let offset = self.len as usize;
 		// rfc1034 4.1.4 message compression
