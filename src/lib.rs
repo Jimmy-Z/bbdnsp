@@ -2,6 +2,8 @@ pub mod msg;
 
 pub mod cvec;
 
+pub use msg::*;
+
 pub const DNS_HEADER_LEN: usize = 12;
 
 pub type DName = cvec::CVec<u8, 63>;
@@ -24,10 +26,10 @@ pub const FLAGS: &[(u8, u8, &str)] = &[
 ];
 // 4 bits afterwards is rcode
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct OpCode(pub u8);
 impl OpCode {
-	const QUERY: OpCode = OpCode(0);
+	pub const QUERY: OpCode = OpCode(0);
 }
 impl std::fmt::Display for OpCode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,55 +43,66 @@ impl std::fmt::Display for OpCode {
 	}
 }
 
-pub const NOERROR: u8 = 0;
-pub const FORMERR: u8 = 1;
-pub const SERVFAIL: u8 = 2;
-pub const NXDOMAIN: u8 = 3;
-pub const NOTIMP: u8 = 4;
-pub const REFUSED: u8 = 5;
+#[derive(PartialEq, Eq)]
 pub struct RCode(pub u8);
+impl RCode {
+	pub const NOERROR: RCode = RCode(0);
+	pub const FORMERR: RCode = RCode(1);
+	pub const SERVFAIL: RCode = RCode(2);
+	pub const NXDOMAIN: RCode = RCode(3);
+	pub const NOTIMP: RCode = RCode(4);
+	pub const REFUSED: RCode = RCode(5);
+}
 impl std::fmt::Display for RCode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let s = match self.0 {
-			NOERROR => "NoError",
-			FORMERR => "FormErr",
-			SERVFAIL => "ServFail",
-			NXDOMAIN => "NxDomain",
-			NOTIMP => "NotImp",
-			REFUSED => "Refused",
-			_ => return write!(f, "{}", self.0),
+		let s = match self {
+			&Self::NOERROR => "NoError",
+			&Self::FORMERR => "FormErr",
+			&Self::SERVFAIL => "ServFail",
+			&Self::NXDOMAIN => "NxDomain",
+			&Self::NOTIMP => "NotImp",
+			&Self::REFUSED => "Refused",
+			RCode(c) => return write!(f, "{}", c),
 		};
 		write!(f, "{}", s)
 	}
 }
 
-pub const IN: u16 = 1;
-pub const CH: u16 = 3;
+#[derive(PartialEq, Eq)]
 pub struct QClass(pub u16);
+impl QClass {
+	pub const IN: QClass = QClass(1);
+	pub const CH: QClass = QClass(3);
+}
 impl std::fmt::Display for QClass {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self.0 {
-			IN => write!(f, "{}", "IN"),
-			CH => write!(f, "{}", "CH"),
-			255 => write!(f, "{}", "any"),
-			_ => write!(f, "{}", self.0),
-		}
+		let s = match self {
+			&Self::IN => "IN",
+			&Self::CH => "CH",
+			QClass(255) => "any",
+			QClass(c) => return write!(f, "{}", c),
+		};
+		write!(f, "{}", s)
 	}
 }
 
-pub const A: u16 = 1;
-pub const CNAME: u16 = 5;
-pub const TXT: u16 = 16;
-pub const AAAA: u16 = 28; // rfc3596
+#[derive(PartialEq, Eq)]
 pub struct QType(pub u16);
+impl QType {
+	pub const A: QType = QType(1);
+	pub const CNAME: QType = QType(5);
+	pub const TXT: QType = QType(16);
+	pub const AAAA: QType = QType(28);
+}
 impl std::fmt::Display for QType {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self.0 {
-			A => write!(f, "{}", "A"),
-			CNAME => write!(f, "{}", "CNAME"),
-			TXT => write!(f, "{}", "TXT"),
-			AAAA => write!(f, "{}", "AAAA"),
-			_ => write!(f, "{}", self.0),
-		}
+		let s = match self {
+			&Self::A => "A",
+			&Self::CNAME => "CNAME",
+			&Self::TXT => "TXT",
+			&Self::AAAA => "AAAA",
+			QType(t) => return write!(f, "{}", t),
+		};
+		write!(f, "{}", s)
 	}
 }

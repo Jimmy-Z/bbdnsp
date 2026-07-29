@@ -1,9 +1,13 @@
-use std::{fmt::Display, net::Ipv4Addr};
+use std::{
+	fmt::Display,
+	net::{Ipv4Addr, Ipv6Addr},
+};
 
 use log::{Level::Error, *};
 
 use super::*;
 
+#[derive(Debug)]
 pub enum ParseError {
 	UnkOpCode(OpCode),
 	Truncated,
@@ -23,6 +27,30 @@ pub struct Query {
 impl Display for Query {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{} {} {}", self.name, self.qtype, self.qclass)
+	}
+}
+
+pub struct Answer {
+	// pub name: DName,
+	pub qtype: QType,
+	pub qclass: QClass,
+	pub ttl: u32,
+	pub rdata: RData,
+}
+
+pub enum RData {
+	A(Ipv4Addr),
+	AAAA(Ipv6Addr),
+	Bytes(DName),
+}
+
+impl RData {
+	fn len(&self) -> u16 {
+		match self {
+			Self::A(_) => 4,
+			Self::AAAA(_) => 16,
+			Self::Bytes(b) => b.len() as u16,
+		}
 	}
 }
 
@@ -87,40 +115,45 @@ impl<'a> Msg<'a> {
 		Ok((q, offset as u16))
 	}
 
-	// pub fn answer() {
-	// 	if qclass != qclass::IN || (qtype != qtype::A && qtype != qtype::AAAA) {
-	// 		self.set_response();
-	// 		self.set_rcode(rcode::NOTIMP);
-	// 		return self.len;
-	// 	}
-	// 	if qtype == qtype::AAAA {
-	// 		self.set_response_ra();
-	// 		return self.len;
-	// 	}
-	// 	let Some((addr, ttl)) = resolver.resolve(&name) else {
-	// 		// rfc says we shouldn't set Name Error since we're not authoritative
-	// 		self.set_response_ra();
-	// 		return self.len;
-	// 	};
-	// 	// start writing response
-	// 	self.set_response_header(rcode::NOERROR, 1, 1, 0, 0);
-	// 	// to do: check available buffer, shouldn't be a problem though
-	// 	// rfc1034 4.1.4 message compression
-	// 	// qname is conveniently always just after the header
-	// 	let name: u16 = 0b1100_0000_0000_0000 | DNS_HEADER_LEN as u16;
-	// 	self.msg[offset..offset + 2].copy_from_slice(&name.to_be_bytes());
-	// 	self.msg[offset + 2..offset + 4].copy_from_slice(&qtype::A.to_be_bytes());
-	// 	self.msg[offset + 4..offset + 6].copy_from_slice(&qclass::IN.to_be_bytes());
-	// 	self.msg[offset + 6..offset + 10].copy_from_slice(&ttl.to_be_bytes());
-	// 	self.msg[offset + 10..offset + 12].copy_from_slice(&4u16.to_be_bytes());
-	// 	self.msg[offset + 12..offset + 16].copy_from_slice(&addr.octets());
-	// 	offset += 16;
+	pub fn deny(&mut self, rcode: RCode) {
+		self.set_response();
+		self.set_rcode(rcode);
+	}
 
-	// 	// length of the response
-	// 	offset
-	// }
+	pub fn answer(&mut self, offset: u16, a: &[Answer]) -> u16 {
+		// start writing response
+		self.set_response_header(RCode::NOERROR, 1, a.len() as u16, 0, 0);
+		// to do: check available buffer, shouldn't be a problem though
+		let mut len = 0;
+		for a in a {
+			len += self.inner_write_answer(offset + len, a);
+		}
+		offset + len
+	}
 
-	fn set_response_header(&mut self, rcode: u8, qd: u16, an: u16, ns: u16, ar: u16) {
+	pub fn inner_write_answer(&mut self, offset: u16, a: &Answer) -> u16 {
+		let offset = offset as usize;
+		// rfc1034 4.1.4 message compression
+		// qname is conveniently always just after the header
+		const QNAME_OFFSET: u16 = 0b1100_0000_0000_0000 | DNS_HEADER_LEN as u16;
+		self.msg[offset..offset + 2].copy_from_slice(&QNAME_OFFSET.to_be_bytes());
+		self.msg[offset + 2..offset + 4].copy_from_slice(&QType::A.0.to_be_bytes());
+		self.msg[offset + 4..offset + 6].copy_from_slice(&QClass::IN.0.to_be_bytes());
+		self.msg[offset + 6..offset + 10].copy_from_slice(&a.ttl.to_be_bytes());
+
+		let len = a.rdata.len();
+		self.msg[offset + 10..offset + 12].copy_from_slice(&a.rdata.len().to_be_bytes());
+		match &a.rdata {
+			RData::A(a) => {
+				self.msg[offset + 12..offset + 12 + len as usize].copy_from_slice(&a.octets());
+			}
+			RData::AAAA(_) => todo!(),
+			RData::Bytes(_) => todo!(),
+		}
+		12 + len
+	}
+
+	fn set_response_header(&mut self, rcode: RCode, qd: u16, an: u16, ns: u16, ar: u16) {
 		self.set_response_ra();
 		self.set_rcode(rcode);
 		self.msg[4..6].copy_from_slice(&qd.to_be_bytes());
@@ -179,8 +212,8 @@ impl<'a> Msg<'a> {
 	fn set_ra(&mut self) {
 		set_bit(&mut self.msg[3], 7)
 	}
-	fn set_rcode(&mut self, c: u8) {
-		set_bits(&mut self.msg[3], 0, 4, c);
+	fn set_rcode(&mut self, c: RCode) {
+		set_bits(&mut self.msg[3], 0, 4, c.0);
 	}
 }
 
