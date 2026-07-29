@@ -10,11 +10,6 @@ pub trait Resolver {
 	fn resolve(self, name: &str) -> Option<(Ipv4Addr, u32)>;
 }
 
-// barebones dns library for fakedns
-// it does 2 things only:
-// 	parse query
-// 	write response (in-place), with 1 A record
-
 pub struct Msg<'a> {
 	msg: &'a mut [u8],
 	len: usize,
@@ -88,7 +83,7 @@ impl<'a> Msg<'a> {
 			self.set_response_ra();
 			return self.len;
 		};
-		// start writting response
+		// start writing response
 		self.set_response_header(RCODE_NOERROR, 1, 1, 0, 0);
 		// to do: check available buffer, shouldn't be a problem though
 		// rfc1034 4.1.4 message compression
@@ -181,7 +176,7 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 	fn try_from(msg: (&'a mut [u8], usize)) -> Result<Self, Self::Error> {
 		let (msg, len) = msg;
 		if len < DNS_HEADER_LEN {
-			debug!("too short to contain a dns mesasge: {len}");
+			debug!("too short to contain a dns message: {len}");
 			return Err(ParseError::Invalid);
 		}
 		// eprintln!("{:08b} {:08b}", msg[2], msg[3]);
@@ -196,7 +191,7 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 	}
 }
 
-// mimics dig/drill output
+// mimics drill/dig output
 impl<'a> Display for Msg<'a> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		writeln!(
@@ -227,7 +222,7 @@ fn u16be(bytes: &[u8]) -> u16 {
 	u16::from_be_bytes(bytes.try_into().unwrap())
 }
 
-// I really liked bitfields in C
+// I really liked bit fields in C
 fn get_bit(b: u8, o: u8) -> bool {
 	(b >> o) & 1 == 1
 }
