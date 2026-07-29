@@ -1,14 +1,31 @@
-pub mod msg;
 
+use log::*;
+
+pub mod msg;
 pub mod cvec;
 
 pub use msg::*;
 
-pub const DNS_HEADER_LEN: usize = 12;
 
 pub type DName = cvec::CVec<u8, 63>;
 // #[cfg(debug_assertions)]
 // assert_eq!(std::mem::size_of::<DName>(), 64);
+
+impl DName {
+	pub fn txt(txt: &[&str]) -> Self {
+		let mut d = DName::new();
+		for &line in txt {
+			let mut len = line.len();
+			if len > u8::MAX as usize {
+				warn!("txt record truncated: \"{}\"({})", line, len);
+				len = u8::MAX as usize;
+			}
+			d.push(len as u8);
+			d.extend_from_slice(&line.as_bytes()[0..len]);
+		}
+		d
+	}
+}
 
 // byte offset, bit offset, name, for easier enumeration/display only
 // caution: in rfc1035 4.1.1 (and rfc6895 2), 0 actually denotes the highest bit
@@ -23,21 +40,21 @@ pub const FLAGS: &[(u8, u8, &str)] = &[
 	(3, 6, "z"),  // zero
 	(3, 5, "ad"), // authentic data
 	(3, 4, "cd"), // checking disabled
+	              // 4 bits afterwards is rcode
 ];
-// 4 bits afterwards is rcode
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct OpCode(pub u8);
 impl OpCode {
-	pub const QUERY: OpCode = OpCode(0);
+	pub const QUERY: Self = Self(0);
 }
 impl std::fmt::Display for OpCode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		let s = match self {
 			&Self::QUERY => "Query",
-			OpCode(1) => "IQUERY",
-			OpCode(2) => "STATUS",
-			OpCode(c) => return write!(f, "{}", c),
+			Self(1) => "IQUERY",
+			Self(2) => "STATUS",
+			Self(c) => return write!(f, "{}", c),
 		};
 		write!(f, "{}", s)
 	}
@@ -46,12 +63,12 @@ impl std::fmt::Display for OpCode {
 #[derive(PartialEq, Eq)]
 pub struct RCode(pub u8);
 impl RCode {
-	pub const NOERROR: RCode = RCode(0);
-	pub const FORMERR: RCode = RCode(1);
-	pub const SERVFAIL: RCode = RCode(2);
-	pub const NXDOMAIN: RCode = RCode(3);
-	pub const NOTIMP: RCode = RCode(4);
-	pub const REFUSED: RCode = RCode(5);
+	pub const NOERROR: Self = Self(0);
+	pub const FORMERR: Self = Self(1);
+	pub const SERVFAIL: Self = Self(2);
+	pub const NXDOMAIN: Self = Self(3);
+	pub const NOTIMP: Self = Self(4);
+	pub const REFUSED: Self = Self(5);
 }
 impl std::fmt::Display for RCode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,7 +79,7 @@ impl std::fmt::Display for RCode {
 			&Self::NXDOMAIN => "NxDomain",
 			&Self::NOTIMP => "NotImp",
 			&Self::REFUSED => "Refused",
-			RCode(c) => return write!(f, "{}", c),
+			Self(c) => return write!(f, "{}", c),
 		};
 		write!(f, "{}", s)
 	}
@@ -71,16 +88,16 @@ impl std::fmt::Display for RCode {
 #[derive(PartialEq, Eq)]
 pub struct QClass(pub u16);
 impl QClass {
-	pub const IN: QClass = QClass(1);
-	pub const CH: QClass = QClass(3);
+	pub const IN: Self = Self(1);
+	pub const CH: Self = Self(3);
 }
 impl std::fmt::Display for QClass {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		let s = match self {
 			&Self::IN => "IN",
 			&Self::CH => "CH",
-			QClass(255) => "any",
-			QClass(c) => return write!(f, "{}", c),
+			Self(255) => "any",
+			Self(c) => return write!(f, "{}", c),
 		};
 		write!(f, "{}", s)
 	}
@@ -89,20 +106,34 @@ impl std::fmt::Display for QClass {
 #[derive(PartialEq, Eq)]
 pub struct QType(pub u16);
 impl QType {
-	pub const A: QType = QType(1);
-	pub const CNAME: QType = QType(5);
-	pub const TXT: QType = QType(16);
-	pub const AAAA: QType = QType(28);
+	pub const A: Self = Self(1);
+	pub const CNAME: Self = Self(5);
+	pub const PTR: Self = Self(12);
+	pub const TXT: Self = Self(16);
+	pub const AAAA: Self = Self(28);
 }
 impl std::fmt::Display for QType {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		let s = match self {
 			&Self::A => "A",
-			&Self::CNAME => "CNAME",
-			&Self::TXT => "TXT",
 			&Self::AAAA => "AAAA",
-			QType(t) => return write!(f, "{}", t),
+			&Self::CNAME => "CNAME",
+			&Self::PTR => "PTR",
+			&Self::TXT => "TXT",
+			Self(2) => "NS",
+			Self(64) => "SVCB",
+			Self(65) => "HTTPS",
+			Self(t) => return write!(f, "{}", t),
 		};
 		write!(f, "{}", s)
+	}
+}
+impl TryFrom<&[u8]> for QType {
+	type Error = ();
+	fn try_from(s: &[u8]) -> Result<Self, Self::Error> {
+		match s {
+			b"a" => Ok(Self::A),
+			_ => Err(()),
+		}
 	}
 }

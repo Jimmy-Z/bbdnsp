@@ -3,9 +3,16 @@ use std::{
 	net::{Ipv4Addr, Ipv6Addr},
 };
 
-use log::{Level::Error, *};
+use log::*;
 
 use super::*;
+
+pub const MSG_HEADER_LEN: usize = 12;
+// technically shortest query:
+// 1 byte length(0), qtype, qclass
+pub const MSG_LEN_MIN: usize = MSG_HEADER_LEN + 1 + 2 + 2;
+
+pub const MSG_LEN_MAX: usize = 1232;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -14,19 +21,19 @@ pub enum ParseError {
 	FormErr,
 }
 
-type Result = std::result::Result<(Query, u16), ParseError>;
+type Result = std::result::Result<Query, ParseError>;
 
 const FORMERR: Result = Err(ParseError::FormErr);
 
 pub struct Query {
-	name: DName,
-	qtype: QType,
-	qclass: QClass,
+	pub name: DName,
+	pub qtype: QType,
+	pub qclass: QClass,
 }
 
 impl Display for Query {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{} {} {}", self.name, self.qtype, self.qclass)
+		write!(f, "{}. {} {}", self.name, self.qtype, self.qclass)
 	}
 }
 
@@ -56,7 +63,7 @@ impl RData {
 
 pub struct Msg<'a> {
 	msg: &'a mut [u8],
-	len: usize,
+	len: u16,
 }
 
 impl<'a> Msg<'a> {
@@ -70,39 +77,35 @@ impl<'a> Msg<'a> {
 			return FORMERR;
 		}
 
+		let mut offset = MSG_HEADER_LEN;
 		// fqdn max len 255
 		let mut name = DName::new();
-		let mut offset = DNS_HEADER_LEN;
-		if offset + 3 + 2 + 2 > self.len {
-			// technically shortest query: 3 + 2 + 2 bytes
-			// 1 byte length, 1 char, ending 0, qtype, qclass
-			// though in real world, tld has at least 2 chars
-			return FORMERR;
-		}
 		// name
-		loop {
-			let label_len = self.msg[offset] as usize;
-			if offset + 1 + label_len + 1 > self.len {
-				return FORMERR;
+		let mut label_len = self.msg[offset] as usize;
+		if label_len > 0 {
+			loop {
+				if offset + 1 + label_len + 1 > self.len as usize {
+					return FORMERR;
+				}
+				name.extend_from_slice(&self.msg[offset + 1..offset + 1 + label_len]);
+				offset += 1 + label_len;
+				// peek next label len to prevent adding a trailing dot
+				label_len = self.msg[offset] as usize;
+				if label_len == 0 {
+					offset += 1;
+					break;
+				}
+				name.push(b'.');
 			}
-			name.extend_from_slice(&self.msg[offset + 1..offset + 1 + label_len]);
-			offset += 1 + label_len;
-			// peek next label len to prevent adding a trailing dot
-			if self.msg[offset] == 0 {
-				offset += 1;
-				break;
-			}
-			name.push(b'.');
-		}
-		if name.len() <= 1 {
-			return FORMERR;
+		} else {
+			offset += 1;
 		}
 
 		if !name.as_ref().is_ascii() {
 			return FORMERR;
 		};
 		// QTYPE QCLASS
-		if offset + 4 > self.len {
+		if offset + 4 > self.len as usize {
 			return FORMERR;
 		}
 		let q = Query {
@@ -110,9 +113,10 @@ impl<'a> Msg<'a> {
 			qtype: QType(u16be(&self.msg[offset..offset + 2])),
 			qclass: QClass(u16be(&self.msg[offset + 2..offset + 4])),
 		};
-		debug!("{}", q);
+		// debug!("{}", q);
 		offset += 4;
-		Ok((q, offset as u16))
+		self.len = offset as u16;
+		Ok(q)
 	}
 
 	pub fn deny(&mut self, rcode: RCode) {
@@ -120,25 +124,23 @@ impl<'a> Msg<'a> {
 		self.set_rcode(rcode);
 	}
 
-	pub fn answer(&mut self, offset: u16, a: &[Answer]) -> u16 {
+	pub fn answer(&mut self, a: &[Answer]) {
 		// start writing response
 		self.set_response_header(RCode::NOERROR, 1, a.len() as u16, 0, 0);
-		// to do: check available buffer, shouldn't be a problem though
-		let mut len = 0;
 		for a in a {
-			len += self.inner_write_answer(offset + len, a);
+			self.inner_write_answer(a);
 		}
-		offset + len
 	}
 
-	pub fn inner_write_answer(&mut self, offset: u16, a: &Answer) -> u16 {
-		let offset = offset as usize;
+	pub fn inner_write_answer(&mut self, a: &Answer) {
+		// to do: check available buffer
+		let offset = self.len as usize;
 		// rfc1034 4.1.4 message compression
 		// qname is conveniently always just after the header
-		const QNAME_OFFSET: u16 = 0b1100_0000_0000_0000 | DNS_HEADER_LEN as u16;
+		const QNAME_OFFSET: u16 = 0b1100_0000_0000_0000 | MSG_HEADER_LEN as u16;
 		self.msg[offset..offset + 2].copy_from_slice(&QNAME_OFFSET.to_be_bytes());
-		self.msg[offset + 2..offset + 4].copy_from_slice(&QType::A.0.to_be_bytes());
-		self.msg[offset + 4..offset + 6].copy_from_slice(&QClass::IN.0.to_be_bytes());
+		self.msg[offset + 2..offset + 4].copy_from_slice(&a.qtype.0.to_be_bytes());
+		self.msg[offset + 4..offset + 6].copy_from_slice(&a.qclass.0.to_be_bytes());
 		self.msg[offset + 6..offset + 10].copy_from_slice(&a.ttl.to_be_bytes());
 
 		let len = a.rdata.len();
@@ -147,10 +149,14 @@ impl<'a> Msg<'a> {
 			RData::A(a) => {
 				self.msg[offset + 12..offset + 12 + len as usize].copy_from_slice(&a.octets());
 			}
-			RData::AAAA(_) => todo!(),
-			RData::Bytes(_) => todo!(),
+			RData::AAAA(a) => {
+				self.msg[offset + 12..offset + 12 + len as usize].copy_from_slice(&a.octets());
+			}
+			RData::Bytes(b) => {
+				self.msg[offset + 12..offset + 12 + len as usize].copy_from_slice(b.as_ref());
+			}
 		}
-		12 + len
+		self.len += 12 + len
 	}
 
 	fn set_response_header(&mut self, rcode: RCode, qd: u16, an: u16, ns: u16, ar: u16) {
@@ -215,19 +221,28 @@ impl<'a> Msg<'a> {
 	fn set_rcode(&mut self, c: RCode) {
 		set_bits(&mut self.msg[3], 0, 4, c.0);
 	}
+
+	#[allow(clippy::len_without_is_empty)]
+	pub fn len(&self) -> usize {
+		self.len as usize
+	}
 }
 
 impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 	type Error = ParseError;
-	fn try_from(msg: (&'a mut [u8], usize)) -> std::result::Result<Self, Self::Error> {
-		let (msg, len) = msg;
-		if len < DNS_HEADER_LEN {
-			debug!("too short to contain a dns message: {len}");
+	fn try_from(bytes: (&'a mut [u8], usize)) -> std::result::Result<Self, Self::Error> {
+		let (bytes, len) = bytes;
+		if len < MSG_LEN_MIN {
+			debug!("too short to be a dns message: {len}");
 			return Err(ParseError::FormErr);
 		}
 		// eprintln!("{:08b} {:08b}", msg[2], msg[3]);
-		let msg = Msg { msg, len };
+		let msg = Msg {
+			msg: bytes,
+			len: len as u16,
+		};
 		if msg.tc() {
+			debug!("header: truncated");
 			return Err(ParseError::Truncated);
 		}
 		if msg.z() {

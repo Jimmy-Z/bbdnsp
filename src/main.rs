@@ -1,5 +1,7 @@
 use std::net::{Ipv4Addr, UdpSocket};
 
+use log::*;
+
 use dns::{msg::RData, *};
 
 fn main() -> std::io::Result<()> {
@@ -10,35 +12,52 @@ fn main() -> std::io::Result<()> {
 	let mut buf = [0; 0x600];
 	loop {
 		let (len, addr) = d.recv_from(&mut buf)?;
-		eprintln!("{len} bytes from {addr}");
+		info!("{len} bytes from {addr}");
 		let msg = Msg::try_from((&mut buf[..], len));
 		if msg.is_err() {
 			continue;
 		}
 		let mut msg = msg.unwrap();
-		println!("{msg}");
-		let len = match msg.get_query() {
-			Ok((q, offset)) => {
-				eprintln!("{}", q);
-				msg.answer(offset, &[Answer{
-					qtype: QType::A,
-					qclass: QClass::IN,
-					ttl: 2501,
-					rdata: RData::A(Ipv4Addr::new(127, 25, 0, 1))
-				}]) as usize
+		eprintln!("{msg}");
+		match msg.get_query() {
+			Ok(q) => {
+				info!("{}", q);
+				handle(&mut msg, &q)
 			}
 			Err(ParseError::UnkOpCode(_)) => {
 				msg.deny(RCode::NOTIMP);
-				len
 			}
 			Err(ParseError::FormErr) => continue,
-			_ => unreachable!()
+			_ => unreachable!(),
 		};
-		 if len > 0 {
-		 	eprintln!("{len} bytes to {addr}");
-		 	let msg = Msg::try_from((&mut buf[..], len)).unwrap();
-		 	eprintln!("{msg}");
-		 	d.send_to(&buf[..len], addr)?;
-		 }
+		let len = msg.len();
+		if msg.len() > 0 {
+			info!("{len} bytes to {addr}");
+			// let msg = Msg::try_from((&mut buf[..], len)).unwrap();
+			eprintln!("{msg}");
+			d.send_to(&buf[..len], addr)?;
+		}
+	}
+}
+
+fn handle(msg: &mut Msg, q: &Query) {
+	if q.qclass != QClass::IN {
+		msg.deny(RCode::NOTIMP);
+		return;
+	}
+	match q.qtype {
+		QType::A => msg.answer(&[Answer {
+			qtype: QType::A,
+			qclass: QClass::IN,
+			ttl: 2501,
+			rdata: RData::A(Ipv4Addr::new(127, 25, 0, 1)),
+		}]),
+		QType::TXT => msg.answer(&[Answer {
+			qtype: QType::TXT,
+			qclass: QClass::IN,
+			ttl: 2501,
+			rdata: RData::Bytes(DName::txt(&["you're (not) welcome,", "\t(not) really."])),
+		}]),
+		_ => msg.deny(RCode::NOTIMP),
 	}
 }
