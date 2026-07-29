@@ -16,6 +16,7 @@ pub enum CVec<T: Copy, const C: usize> {
 }
 
 impl<T: Copy + Default, const C: usize> CVec<T, C> {
+	#[allow(clippy::new_without_default)]
 	pub fn new() -> Self {
 		Self::Int(([T::default(); C], unsafe { NonZeroU8::new_unchecked(1) }))
 	}
@@ -38,14 +39,14 @@ impl<T: Copy + Default, const C: usize> CVec<T, C> {
 		}
 	}
 
-	pub fn pop(&mut self) -> Option<T> {
-		match self {
-			CVec::Int((a, l)) => {
-				todo!()
-			}
-			CVec::Ext(v) => v.pop(),
-		}
-	}
+	// pub fn pop(&mut self) -> Option<T> {
+	// 	match self {
+	// 		CVec::Int((a, l)) => {
+	// 			todo!()
+	// 		}
+	// 		CVec::Ext(v) => v.pop(),
+	// 	}
+	// }
 
 	pub fn push(&mut self, t: T) {
 		match self {
