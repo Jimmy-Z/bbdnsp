@@ -3,10 +3,6 @@
 
 use std::{fmt::Display, num::NonZeroU8};
 
-// since the usage of NonZero, len is internally presented +1
-#[cfg(debug_assertions)]
-const MAX_CAP: usize = NonZeroU8::MAX.get() as usize - 1;
-
 #[derive(Clone, Debug)]
 pub enum CVec<T: Copy, const C: usize> {
 	Int(([T; C], NonZeroU8)),
@@ -14,6 +10,14 @@ pub enum CVec<T: Copy, const C: usize> {
 }
 
 impl<T: Copy + Default, const C: usize> CVec<T, C> {
+	// since the usage of NonZero, len is internally presented +1
+	#[cfg(debug_assertions)]
+	const _MAX_CAP: usize = NonZeroU8::MAX.get() as usize - 1;
+	#[cfg(debug_assertions)]
+	const _MAX_CAP_CHK: () = assert!(C <= Self::_MAX_CAP);
+	#[cfg(debug_assertions)]
+	const _CVEC63_CHK: () = assert!(std::mem::size_of::<CVec<u8, 63>>() == 64);
+
 	pub fn new() -> Self {
 		Self::Int(([T::default(); C], unsafe { NonZeroU8::new_unchecked(1) }))
 	}
@@ -48,13 +52,13 @@ impl<T: Copy + Default, const C: usize> CVec<T, C> {
 	pub fn push(&mut self, t: T) {
 		match self {
 			Self::Int(a) => {
-				let len = a.1.get() - 1;
-				if (len as usize) < C {
-					a.0[len as usize] = t;
-					a.1 = unsafe { NonZeroU8::new_unchecked(len + 2) };
+				let len = a.1.get() as usize - 1;
+				if len < C {
+					a.0[len] = t;
+					a.1 = unsafe { NonZeroU8::new_unchecked(len as u8 + 2) };
 				} else {
-					let mut v = Vec::with_capacity(len as usize + 1);
-					v.extend_from_slice(&a.0[..len as usize]);
+					let mut v = Vec::with_capacity(len + 1);
+					v.extend_from_slice(&a.0[..len]);
 					v.push(t);
 					*self = Self::Ext(v);
 				}
@@ -65,13 +69,13 @@ impl<T: Copy + Default, const C: usize> CVec<T, C> {
 	pub fn extend_from_slice(&mut self, s: &[T]) {
 		match self {
 			Self::Int(a) => {
-				let len = a.1.get() - 1;
-				if (len as usize) + s.len() <= C {
-					a.0[len as usize..len as usize + s.len()].copy_from_slice(s);
-					a.1 = unsafe { NonZeroU8::new_unchecked(len + s.len() as u8 + 1) };
+				let len = a.1.get() as usize - 1;
+				if len + s.len() <= C {
+					a.0[len..len + s.len()].copy_from_slice(s);
+					a.1 = unsafe { NonZeroU8::new_unchecked((len + s.len()) as u8 + 1) };
 				} else {
-					let mut v = Vec::with_capacity(len as usize + 1);
-					v.extend_from_slice(&a.0[..len as usize]);
+					let mut v = Vec::with_capacity(len + s.len());
+					v.extend_from_slice(&a.0[..len]);
 					v.extend_from_slice(s);
 					*self = Self::Ext(v);
 				}
@@ -100,8 +104,6 @@ impl<T: Copy, const C: usize> AsRef<[T]> for CVec<T, C> {
 
 impl<T: Copy + Default, const C: usize> From<&[T]> for CVec<T, C> {
 	fn from(v: &[T]) -> Self {
-		#[cfg(debug_assertions)]
-		assert!(C <= MAX_CAP);
 		if v.len() <= C {
 			Self::inner_from_slice(v)
 		} else {
@@ -112,8 +114,6 @@ impl<T: Copy + Default, const C: usize> From<&[T]> for CVec<T, C> {
 
 impl<T: Copy + Default, const C: usize> From<Vec<T>> for CVec<T, C> {
 	fn from(v: Vec<T>) -> Self {
-		#[cfg(debug_assertions)]
-		assert!(C <= MAX_CAP);
 		if v.len() <= C {
 			Self::inner_from_slice(&v)
 		} else {

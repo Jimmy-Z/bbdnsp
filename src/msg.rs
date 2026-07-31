@@ -148,7 +148,6 @@ impl<'a> Msg<'a> {
 	}
 
 	pub fn next_answer(&mut self) -> Result<Answer> {
-
 		let offset = self.skip_name(self.cursor as usize)?;
 
 		// qtype, qclass, ttl, len
@@ -167,10 +166,14 @@ impl<'a> Msg<'a> {
 
 		let rdata = match (qtype, qclass, rdata_len) {
 			(QType::A, QClass::IN, 4) => RData::A(Ipv4Addr::from_octets(
-				(&self.buf[offset + 10..offset + 10 + 4]).try_into().unwrap(),
+				(&self.buf[offset + 10..offset + 10 + 4])
+					.try_into()
+					.unwrap(),
 			)),
 			(QType::AAAA, QClass::IN, 16) => RData::AAAA(Ipv6Addr::from_octets(
-				(&self.buf[offset + 10..offset + 10 + 16]).try_into().unwrap(),
+				(&self.buf[offset + 10..offset + 10 + 16])
+					.try_into()
+					.unwrap(),
 			)),
 			(_, _, _) => RData::Raw(CVec63::from(
 				&self.buf[offset + 10..offset + 10 + (rdata_len as usize)],
@@ -303,22 +306,22 @@ impl<'a> Msg<'a> {
 	fn set_response(&mut self) {
 		set_bit(&mut self.buf[2], 7)
 	}
-	fn set_rd(&mut self) {
-		set_bit(&mut self.buf[2], 0)
-	}
+	// fn set_rd(&mut self) {
+	// 	set_bit(&mut self.buf[2], 0)
+	// }
 	fn set_ra(&mut self) {
 		set_bit(&mut self.buf[3], 7)
 	}
-	fn set_opcode(&mut self, c: OpCode) {
-		set_bits(&mut self.buf[2], 3, 4, c.0);
-	}
+	// fn set_opcode(&mut self, c: OpCode) {
+	// 	set_bits(&mut self.buf[2], 3, 4, c.0);
+	// }
 	fn set_rcode(&mut self, c: RCode) {
 		set_bits(&mut self.buf[3], 0, 4, c.0);
 	}
 
-	fn set_qd(&mut self, qd: u16) {
-		self.buf[4..6].copy_from_slice(&qd.to_be_bytes());
-	}
+	// fn set_qd(&mut self, qd: u16) {
+	// 	self.buf[4..6].copy_from_slice(&qd.to_be_bytes());
+	// }
 
 	#[allow(clippy::len_without_is_empty)]
 	pub fn len(&self) -> usize {
@@ -351,6 +354,10 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 	}
 }
 
+// all simple queries have this identical header
+// rd: 1, qd: 1
+const Q_HEADER: [u8; 10] = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+
 pub fn mk_query(buf: &mut [u8], id: u16, q: Query) -> Result<usize> {
 	if q.name.len() > FQDN_LEN_MAX {
 		return Err(MsgError::FormErr);
@@ -361,8 +368,7 @@ pub fn mk_query(buf: &mut [u8], id: u16, q: Query) -> Result<usize> {
 		cursor: 0,
 	};
 	msg.set_id(id);
-	msg.set_rd();
-	msg.set_qd(1);
+	msg.buf[2..12].copy_from_slice(&Q_HEADER[..]);
 	let mut offset = MSG_HEADER_LEN;
 	for l in q.name.as_ref().split(|&b| b == b'.') {
 		if l.len() > LABEL_LEN_MAX {
@@ -453,6 +459,7 @@ mod tests {
 		assert_eq!(lq, msg.cursor as usize);
 		eprintln!("{q}");
 
+		// write answer
 		msg.answer(&[
 			Answer {
 				qtype: QType::A,
@@ -464,7 +471,7 @@ mod tests {
 				qtype: QType::AAAA,
 				qclass: QClass::IN,
 				ttl: 2501,
-				rdata: RData::A(Ipv4Addr::new(127, 25, 0, 1)),
+				rdata: RData::AAAA(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0x2501)),
 			},
 			Answer {
 				qtype: QType::TXT,
@@ -475,6 +482,7 @@ mod tests {
 		]);
 		let la = msg.len as usize;
 
+		// parse answer
 		let mut msg = Msg::try_from((&mut buf[..], la)).unwrap();
 		eprintln!("{msg}");
 		let q = msg.get_query().unwrap();

@@ -8,6 +8,7 @@
 		"qname",
 		"QTYPE",
 		"rcode",
+		"rdata",
 		"Serv"
 	]
 }

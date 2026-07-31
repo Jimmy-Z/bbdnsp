@@ -9,8 +9,6 @@ pub use msg::*;
 
 
 pub type CVec63 = CVec<u8, 63>;
-// #[cfg(debug_assertions)]
-// assert_eq!(std::mem::size_of::<DName>(), 64);
 
 impl<const C: usize> CVec<u8, C> {
 	pub fn txt(txt: &[&str]) -> Self {
