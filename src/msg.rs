@@ -169,7 +169,7 @@ impl<'a> Msg<'a> {
 			(QType::A, QClass::IN, 4) => RData::A(Ipv4Addr::from_octets(
 				(&self.buf[offset + 10..offset + 10 + 4]).try_into().unwrap(),
 			)),
-			(QType::AAAA, QClass::IN, 4) => RData::A(Ipv4Addr::from_octets(
+			(QType::AAAA, QClass::IN, 16) => RData::AAAA(Ipv6Addr::from_octets(
 				(&self.buf[offset + 10..offset + 10 + 16]).try_into().unwrap(),
 			)),
 			(_, _, _) => RData::Raw(CVec63::from(
@@ -212,6 +212,7 @@ impl<'a> Msg<'a> {
 	pub fn answer(&mut self, a: &[Answer]) {
 		// start writing response
 		self.set_response_header(RCode::NOERROR, 1, a.len() as u16, 0, 0);
+		self.len = self.cursor;
 		for a in a {
 			self.inner_write_answer(a);
 		}
@@ -219,7 +220,7 @@ impl<'a> Msg<'a> {
 
 	fn inner_write_answer(&mut self, a: &Answer) {
 		// to do: check available buffer
-		let offset = self.cursor as usize;
+		let offset = self.len as usize;
 		// to do: currently all answers are direct
 		self.buf[offset..offset + 2].copy_from_slice(&MC_QNAME.to_be_bytes());
 		self.buf[offset + 2..offset + 4].copy_from_slice(&a.qtype.0.to_be_bytes());
