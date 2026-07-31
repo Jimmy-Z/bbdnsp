@@ -24,10 +24,10 @@ fn main() -> std::io::Result<()> {
 				info!("{}", q);
 				handle(&mut msg, &q)
 			}
-			Err(ParseError::UnkOpCode(_)) => {
+			Err(MsgError::UnkOpCode(_)) => {
 				msg.deny(RCode::NOTIMP);
 			}
-			Err(ParseError::FormErr) => continue,
+			Err(MsgError::FormErr) => continue,
 			_ => unreachable!(),
 		};
 		let len = msg.len();
