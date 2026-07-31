@@ -44,7 +44,7 @@ pub const FLAGS: &[(u8, u8, &str)] = &[
 	              // 4 bits afterwards is rcode
 ];
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub struct OpCode(pub u8);
 impl OpCode {
 	pub const QUERY: Self = Self(0);
@@ -61,7 +61,7 @@ impl std::fmt::Display for OpCode {
 	}
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub struct RCode(pub u8);
 impl RCode {
 	pub const NOERROR: Self = Self(0);
@@ -86,7 +86,7 @@ impl std::fmt::Display for RCode {
 	}
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub struct QClass(pub u16);
 impl QClass {
 	pub const IN: Self = Self(1);
@@ -104,7 +104,7 @@ impl std::fmt::Display for QClass {
 	}
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub struct QType(pub u16);
 impl QType {
 	pub const A: Self = Self(1);

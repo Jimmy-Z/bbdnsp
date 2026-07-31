@@ -47,10 +47,20 @@ pub struct Answer {
 	pub rdata: RData,
 }
 
+impl Display for Answer {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(
+			f,
+			"{} {} {} {}",
+			self.qtype, self.qclass, self.ttl, self.rdata
+		)
+	}
+}
+
 pub enum RData {
 	A(Ipv4Addr),
 	AAAA(Ipv6Addr),
-	Bytes(CVec63),
+	Raw(CVec63),
 }
 
 impl RData {
@@ -58,7 +68,17 @@ impl RData {
 		match self {
 			Self::A(_) => 4,
 			Self::AAAA(_) => 16,
-			Self::Bytes(b) => b.len() as u16,
+			Self::Raw(b) => b.len() as u16,
+		}
+	}
+}
+
+impl Display for RData {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::A(a) => write!(f, "{a}"),
+			Self::AAAA(a) => write!(f, "{a}"),
+			Self::Raw(d) => write!(f, "{d}"),
 		}
 	}
 }
@@ -66,7 +86,7 @@ impl RData {
 pub struct Msg<'a> {
 	buf: &'a mut [u8],
 	len: u16,
-	q_end: u16,
+	cursor: u16,
 }
 
 // rfc1034 4.1.4 message compression
@@ -123,9 +143,65 @@ impl<'a> Msg<'a> {
 			qclass: QClass(u16be(&self.buf[offset + 2..offset + 4])),
 		};
 		// debug!("{}", q);
-		offset += 4;
-		self.q_end = offset as u16;
+		self.cursor = offset as u16 + 4;
 		Ok(q)
+	}
+
+	pub fn next_answer(&mut self) -> Result<Answer> {
+
+		let offset = self.skip_name(self.cursor as usize)?;
+
+		// qtype, qclass, ttl, len
+		if offset + 2 + 2 + 4 + 2 > self.len as usize {
+			return Err(MsgError::FormErr);
+		}
+		let qtype = QType(u16be(&self.buf[offset..offset + 2]));
+		let qclass = QClass(u16be(&self.buf[offset + 2..offset + 4]));
+		let ttl = u32be(&self.buf[offset + 4..offset + 8]);
+		let rdata_len = u16be(&self.buf[offset + 8..offset + 10]);
+
+		self.cursor = offset as u16 + 10 + rdata_len;
+		if self.cursor > self.len {
+			return Err(MsgError::FormErr);
+		}
+
+		let rdata = match (qtype, qclass, rdata_len) {
+			(QType::A, QClass::IN, 4) => RData::A(Ipv4Addr::from_octets(
+				(&self.buf[offset + 10..offset + 10 + 4]).try_into().unwrap(),
+			)),
+			(QType::AAAA, QClass::IN, 4) => RData::A(Ipv4Addr::from_octets(
+				(&self.buf[offset + 10..offset + 10 + 16]).try_into().unwrap(),
+			)),
+			(_, _, _) => RData::Raw(CVec63::from(
+				&self.buf[offset + 10..offset + 10 + (rdata_len as usize)],
+			)),
+		};
+		Ok(Answer {
+			qtype,
+			qclass,
+			ttl,
+			rdata,
+		})
+	}
+
+	fn skip_name(&self, mut offset: usize) -> Result<usize> {
+		let len = self.len as usize;
+		loop {
+			if offset >= len {
+				return Err(MsgError::FormErr);
+			}
+			let ll = self.buf[offset];
+			if ll == 0 {
+				return Ok(offset + 1);
+			}
+			match ll & MC_SIG {
+				0 => {
+					offset += ll as usize + 1;
+				}
+				MC_SIG if offset + 2 < len => return Ok(offset + 2),
+				_ => return Err(MsgError::FormErr),
+			}
+		}
 	}
 
 	pub fn deny(&mut self, rcode: RCode) {
@@ -143,7 +219,7 @@ impl<'a> Msg<'a> {
 
 	fn inner_write_answer(&mut self, a: &Answer) {
 		// to do: check available buffer
-		let offset = self.q_end as usize;
+		let offset = self.cursor as usize;
 		// to do: currently all answers are direct
 		self.buf[offset..offset + 2].copy_from_slice(&MC_QNAME.to_be_bytes());
 		self.buf[offset + 2..offset + 4].copy_from_slice(&a.qtype.0.to_be_bytes());
@@ -159,7 +235,7 @@ impl<'a> Msg<'a> {
 			RData::AAAA(a) => {
 				self.buf[offset + 12..offset + 12 + len as usize].copy_from_slice(&a.octets());
 			}
-			RData::Bytes(b) => {
+			RData::Raw(b) => {
 				self.buf[offset + 12..offset + 12 + len as usize].copy_from_slice(b.as_ref());
 			}
 		}
@@ -261,7 +337,7 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 		let msg = Msg {
 			buf: bytes,
 			len: len as u16,
-			q_end: 0,
+			cursor: 0,
 		};
 		if msg.tc() {
 			debug!("header: truncated");
@@ -274,14 +350,14 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 	}
 }
 
-fn mk_query(buf: &mut [u8], id: u16, q: Query) -> Result<usize> {
+pub fn mk_query(buf: &mut [u8], id: u16, q: Query) -> Result<usize> {
 	if q.name.len() > FQDN_LEN_MAX {
 		return Err(MsgError::FormErr);
 	}
 	let mut msg = Msg {
 		buf,
 		len: 0,
-		q_end: 0,
+		cursor: 0,
 	};
 	msg.set_id(id);
 	msg.set_rd();
@@ -317,7 +393,7 @@ impl<'a> Display for Msg<'a> {
 				write!(f, " {name}")?;
 			}
 		}
-		writeln!(
+		write!(
 			f,
 			"; QUERY: {}, ANSWER: {}, AUTHORITY: {}, ADDITIONAL: {}",
 			self.qd_count(),
@@ -330,6 +406,10 @@ impl<'a> Display for Msg<'a> {
 
 fn u16be(bytes: &[u8]) -> u16 {
 	u16::from_be_bytes(bytes.try_into().unwrap())
+}
+
+fn u32be(bytes: &[u8]) -> u32 {
+	u32::from_be_bytes(bytes.try_into().unwrap())
 }
 
 // I really liked bit fields in C
@@ -352,20 +432,57 @@ mod tests {
 
 	#[test]
 	fn test_query() {
+		// write query
 		let mut buf = [0u8; MSG_LEN_MAX];
-		let l = mk_query(
+		let lq = mk_query(
 			&mut buf,
 			2501,
 			Query {
-				name: b"g.co".as_slice().into(),
+				name: b"example.com".as_slice().into(),
 				qtype: QType::A,
 				qclass: QClass::IN,
 			},
-		).unwrap();
-		let mut msg = Msg::try_from((&mut buf[..], l)).unwrap();
+		)
+		.unwrap();
+
+		// parse query
+		let mut msg = Msg::try_from((&mut buf[..], lq)).unwrap();
 		eprintln!("{msg}");
 		let q = msg.get_query().unwrap();
-		assert_eq!(l, msg.len as usize);
+		assert_eq!(lq, msg.cursor as usize);
 		eprintln!("{q}");
+
+		msg.answer(&[
+			Answer {
+				qtype: QType::A,
+				qclass: QClass::IN,
+				ttl: 2501,
+				rdata: RData::A(Ipv4Addr::new(127, 25, 0, 1)),
+			},
+			Answer {
+				qtype: QType::AAAA,
+				qclass: QClass::IN,
+				ttl: 2501,
+				rdata: RData::A(Ipv4Addr::new(127, 25, 0, 1)),
+			},
+			Answer {
+				qtype: QType::TXT,
+				qclass: QClass::IN,
+				ttl: 2501,
+				rdata: RData::Raw(CVec63::txt(&["you're (not) welcome"])),
+			},
+		]);
+		let la = msg.len as usize;
+
+		let mut msg = Msg::try_from((&mut buf[..], la)).unwrap();
+		eprintln!("{msg}");
+		let q = msg.get_query().unwrap();
+		eprintln!("{q}");
+
+		for _ in 0..msg.an_count() {
+			let a = msg.next_answer().unwrap();
+			eprintln!("{a}");
+		}
+		assert_eq!(la, msg.cursor as usize);
 	}
 }

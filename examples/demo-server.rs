@@ -62,7 +62,7 @@ fn handle(msg: &mut Msg, q: &Query) {
 			qtype: QType::TXT,
 			qclass: QClass::IN,
 			ttl: 2501,
-			rdata: RData::Bytes(CVec63::txt(&["you're (not) welcome,", "\t(not) really."])),
+			rdata: RData::Raw(CVec63::txt(&["you're (not) welcome", "(not) really."])),
 		}]),
 		_ => msg.deny(RCode::NOTIMP),
 	}
