@@ -11,8 +11,8 @@ pub const MSG_HEADER_LEN: usize = 12;
 // technically shortest query:
 // 1 byte name (root), qtype, qclass
 pub const MSG_LEN_MIN: usize = MSG_HEADER_LEN + 1 + 2 + 2;
-
 pub const MSG_LEN_MAX: usize = 1232;
+pub const MSG_BUF_LEN_DEF: usize = 0x200;
 
 // where is the source of it?
 pub const FQDN_LEN_MAX: usize = 253;
@@ -84,12 +84,12 @@ impl Display for RData {
 }
 
 pub struct Msg<'a> {
-	buf: &'a mut [u8],
-	len: u16,
+	buf: &'a mut Vec<u8>,
 	cursor: u16,
 }
 
 // rfc1034 4.1.4 message compression
+const MC_MASK: u8 = 0b1100_0000;
 const MC_SIG: u8 = 0b1100_0000;
 const MC_SIG16: u16 = 0b1100_0000_0000_0000;
 // qname is conveniently always just after the header
@@ -113,7 +113,7 @@ impl<'a> Msg<'a> {
 		let mut label_len = self.buf[offset] as usize;
 		if label_len > 0 {
 			loop {
-				if offset + 1 + label_len + 1 > self.len as usize {
+				if offset + 1 + label_len + 1 > self.buf.len() {
 					return Err(MsgError::FormErr);
 				}
 				name.extend_from_slice(&self.buf[offset + 1..offset + 1 + label_len]);
@@ -134,7 +134,7 @@ impl<'a> Msg<'a> {
 			return Err(MsgError::FormErr);
 		};
 		// QTYPE QCLASS
-		if offset + 4 > self.len as usize {
+		if offset + 4 > self.buf.len() {
 			return Err(MsgError::FormErr);
 		}
 		let q = Query {
@@ -151,7 +151,7 @@ impl<'a> Msg<'a> {
 		let offset = self.skip_name(self.cursor as usize)?;
 
 		// qtype, qclass, ttl, len
-		if offset + 2 + 2 + 4 + 2 > self.len as usize {
+		if offset + 2 + 2 + 4 + 2 > self.buf.len() {
 			return Err(MsgError::FormErr);
 		}
 		let qtype = QType(u16be(&self.buf[offset..offset + 2]));
@@ -160,7 +160,7 @@ impl<'a> Msg<'a> {
 		let rdata_len = u16be(&self.buf[offset + 8..offset + 10]);
 
 		self.cursor = offset as u16 + 10 + rdata_len;
-		if self.cursor > self.len {
+		if self.cursor > self.buf.len() as u16 {
 			return Err(MsgError::FormErr);
 		}
 
@@ -188,7 +188,7 @@ impl<'a> Msg<'a> {
 	}
 
 	fn skip_name(&self, mut offset: usize) -> Result<usize> {
-		let len = self.len as usize;
+		let len = self.buf.len();
 		loop {
 			if offset >= len {
 				return Err(MsgError::FormErr);
@@ -197,7 +197,7 @@ impl<'a> Msg<'a> {
 			if ll == 0 {
 				return Ok(offset + 1);
 			}
-			match ll & MC_SIG {
+			match ll & MC_MASK {
 				0 => {
 					offset += ll as usize + 1;
 				}
@@ -212,38 +212,35 @@ impl<'a> Msg<'a> {
 		self.set_rcode(rcode);
 	}
 
+	// CAUTION: assumes cursor is at the end of the query
 	pub fn answer(&mut self, a: &[Answer]) {
 		// start writing response
 		self.set_response_header(RCode::NOERROR, 1, a.len() as u16, 0, 0);
-		self.len = self.cursor;
+		self.buf.resize(self.cursor as usize, 0);
 		for a in a {
 			self.inner_write_answer(a);
 		}
 	}
 
 	fn inner_write_answer(&mut self, a: &Answer) {
-		// to do: check available buffer
-		let offset = self.len as usize;
 		// to do: currently all answers are direct
-		self.buf[offset..offset + 2].copy_from_slice(&MC_QNAME.to_be_bytes());
-		self.buf[offset + 2..offset + 4].copy_from_slice(&a.qtype.0.to_be_bytes());
-		self.buf[offset + 4..offset + 6].copy_from_slice(&a.qclass.0.to_be_bytes());
-		self.buf[offset + 6..offset + 10].copy_from_slice(&a.ttl.to_be_bytes());
+		self.buf.extend_from_slice(&MC_QNAME.to_be_bytes());
+		self.buf.extend_from_slice(&a.qtype.0.to_be_bytes());
+		self.buf.extend_from_slice(&a.qclass.0.to_be_bytes());
+		self.buf.extend_from_slice(&a.ttl.to_be_bytes());
 
-		let len = a.rdata.len();
-		self.buf[offset + 10..offset + 12].copy_from_slice(&a.rdata.len().to_be_bytes());
+		self.buf.extend_from_slice(&a.rdata.len().to_be_bytes());
 		match &a.rdata {
 			RData::A(a) => {
-				self.buf[offset + 12..offset + 12 + len as usize].copy_from_slice(&a.octets());
+				self.buf.extend_from_slice(&a.octets());
 			}
 			RData::AAAA(a) => {
-				self.buf[offset + 12..offset + 12 + len as usize].copy_from_slice(&a.octets());
+				self.buf.extend_from_slice(&a.octets());
 			}
 			RData::Raw(b) => {
-				self.buf[offset + 12..offset + 12 + len as usize].copy_from_slice(b.as_ref());
+				self.buf.extend_from_slice(b.as_ref());
 			}
 		}
-		self.len += 12 + len
 	}
 
 	fn set_response_header(&mut self, rcode: RCode, qd: u16, an: u16, ns: u16, ar: u16) {
@@ -299,9 +296,9 @@ impl<'a> Msg<'a> {
 		RCode(get_bits(self.buf[3], 0, 4))
 	}
 
-	fn set_id(&mut self, id: u16) {
-		self.buf[0..2].copy_from_slice(&id.to_be_bytes());
-	}
+	// fn set_id(&mut self, id: u16) {
+	// 	self.buf[0..2].copy_from_slice(&id.to_be_bytes());
+	// }
 
 	fn set_response(&mut self) {
 		set_bit(&mut self.buf[2], 7)
@@ -325,24 +322,19 @@ impl<'a> Msg<'a> {
 
 	#[allow(clippy::len_without_is_empty)]
 	pub fn len(&self) -> usize {
-		self.len as usize
+		self.buf.len()
 	}
 }
 
-impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
+impl<'a> TryFrom<&'a mut Vec<u8>> for Msg<'a> {
 	type Error = MsgError;
-	fn try_from(bytes: (&'a mut [u8], usize)) -> std::result::Result<Self, Self::Error> {
-		let (bytes, len) = bytes;
-		if len < MSG_LEN_MIN {
-			debug!("too short to be a dns message: {len}");
+	fn try_from(buf: &'a mut Vec<u8>) -> std::result::Result<Self, Self::Error> {
+		if buf.len() < MSG_LEN_MIN {
+			debug!("too short to be a dns message: {}", buf.len());
 			return Err(MsgError::FormErr);
 		}
 		// eprintln!("{:08b} {:08b}", msg[2], msg[3]);
-		let msg = Msg {
-			buf: bytes,
-			len: len as u16,
-			cursor: 0,
-		};
+		let msg = Msg { buf, cursor: 0 };
 		if msg.tc() {
 			debug!("header: truncated");
 			return Err(MsgError::Truncated);
@@ -358,31 +350,26 @@ impl<'a> TryFrom<(&'a mut [u8], usize)> for Msg<'a> {
 // rd: 1, qd: 1
 const Q_HEADER: [u8; 10] = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
 
-pub fn mk_query(buf: &mut [u8], id: u16, q: Query) -> Result<usize> {
+pub fn mk_query(buf: &mut Vec<u8>, id: u16, q: Query) -> Result<()> {
 	if q.name.len() > FQDN_LEN_MAX {
 		return Err(MsgError::FormErr);
 	}
-	let mut msg = Msg {
-		buf,
-		len: 0,
-		cursor: 0,
-	};
-	msg.set_id(id);
-	msg.buf[2..12].copy_from_slice(&Q_HEADER[..]);
-	let mut offset = MSG_HEADER_LEN;
+	let msg = Msg { buf, cursor: 0 };
+	msg.buf.clear();
+	msg.buf.extend_from_slice(&id.to_be_bytes());
+	msg.buf.extend_from_slice(&Q_HEADER);
 	for l in q.name.as_ref().split(|&b| b == b'.') {
 		if l.len() > LABEL_LEN_MAX {
 			return Err(MsgError::FormErr);
 		}
-		msg.buf[offset] = l.len() as u8;
-		msg.buf[offset + 1..offset + 1 + l.len()].copy_from_slice(l);
-		offset += 1 + l.len();
+		msg.buf.push(l.len() as u8);
+		msg.buf.extend_from_slice(l);
 	}
-	msg.buf[offset] = 0;
-	msg.buf[offset + 1..offset + 1 + 2].copy_from_slice(&q.qtype.0.to_be_bytes());
-	msg.buf[offset + 3..offset + 3 + 2].copy_from_slice(&q.qclass.0.to_be_bytes());
+	msg.buf.push(0);
+	msg.buf.extend_from_slice(&q.qtype.0.to_be_bytes());
+	msg.buf.extend_from_slice(&q.qclass.0.to_be_bytes());
 
-	Ok(MSG_HEADER_LEN + 1 + q.name.len() + 1 + 2 + 2)
+	Ok(())
 }
 
 // just the header, mimics drill/dig output
@@ -440,8 +427,8 @@ mod tests {
 	#[test]
 	fn test_query() {
 		// write query
-		let mut buf = [0u8; MSG_LEN_MAX];
-		let lq = mk_query(
+		let mut buf = Vec::with_capacity(MSG_BUF_LEN_DEF);
+		mk_query(
 			&mut buf,
 			2501,
 			Query {
@@ -451,9 +438,10 @@ mod tests {
 			},
 		)
 		.unwrap();
+		let lq = buf.len();
 
 		// parse query
-		let mut msg = Msg::try_from((&mut buf[..], lq)).unwrap();
+		let mut msg = Msg::try_from(&mut buf).unwrap();
 		eprintln!("{msg}");
 		let q = msg.get_query().unwrap();
 		assert_eq!(lq, msg.cursor as usize);
@@ -480,10 +468,10 @@ mod tests {
 				rdata: RData::Raw(CVec63::txt(&["you're (not) welcome"])),
 			},
 		]);
-		let la = msg.len as usize;
+		let la = buf.len();
 
 		// parse answer
-		let mut msg = Msg::try_from((&mut buf[..], la)).unwrap();
+		let mut msg = Msg::try_from(&mut buf).unwrap();
 		eprintln!("{msg}");
 		let q = msg.get_query().unwrap();
 		eprintln!("{q}");

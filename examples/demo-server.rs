@@ -9,12 +9,16 @@ fn main() -> std::io::Result<()> {
 
 	let d = UdpSocket::bind("127.0.0.1:1053")?;
 
-	let mut buf = [0; MSG_LEN_MAX];
+	// unlike tokio sockets, std sockets doesn't support BufMut
+	// wants &mut [u8], which must be initialized
+	let mut buf = vec![0; MSG_LEN_MAX];
 	loop {
 		let (len, addr) = d.recv_from(&mut buf)?;
+		buf.resize(len, 0);
 		info!("{len} bytes from {addr}");
-		let msg = Msg::try_from((&mut buf[..], len));
+		let msg = Msg::try_from(&mut buf);
 		if msg.is_err() {
+			buf.resize(MSG_LEN_MAX, 0);
 			continue;
 		}
 		let mut msg = msg.unwrap();
@@ -30,13 +34,11 @@ fn main() -> std::io::Result<()> {
 			Err(MsgError::FormErr) => continue,
 			_ => unreachable!(),
 		};
-		let len = msg.len();
-		if msg.len() > 0 {
-			info!("{len} bytes to {addr}");
-			// let msg = Msg::try_from((&mut buf[..], len)).unwrap();
-			eprintln!("{msg}");
-			d.send_to(&buf[..len], addr)?;
-		}
+		info!("{} bytes to {addr}", msg.len());
+		// let msg = Msg::try_from((&mut buf[..], len)).unwrap();
+		eprintln!("{msg}");
+		d.send_to(&buf[..], addr)?;
+		buf.resize(MSG_LEN_MAX, 0);
 	}
 }
 
