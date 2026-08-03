@@ -19,7 +19,7 @@ impl<T: Copy + Default, const C: usize> CVec<T, C> {
 	const _CVEC63_CHK: () = assert!(std::mem::size_of::<CVec<u8, 63>>() == 64);
 
 	pub fn new() -> Self {
-		Self::Int(([T::default(); C], unsafe { NonZeroU8::new_unchecked(1) }))
+		Self::Int(([T::default(); C], NonZeroU8::new(1).unwrap()))
 	}
 
 	pub fn len(&self) -> usize {

@@ -1,12 +1,12 @@
+use std::str::FromStr as _;
 
 use log::*;
 
-pub mod msg;
 pub mod cvec;
+pub mod msg;
 
-use cvec::CVec;
+pub use cvec::CVec;
 pub use msg::*;
-
 
 pub type CVec63 = CVec<u8, 63>;
 
@@ -102,7 +102,7 @@ impl std::fmt::Display for QClass {
 	}
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct QType(pub u16);
 impl QType {
 	pub const A: Self = Self(1);
@@ -110,29 +110,43 @@ impl QType {
 	pub const PTR: Self = Self(12);
 	pub const TXT: Self = Self(16);
 	pub const AAAA: Self = Self(28);
+	pub const SVCB: Self = Self(64);
+	pub const HTTPS: Self = Self(65);
 }
 impl std::fmt::Display for QType {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		let s = match self {
 			&Self::A => "A",
-			&Self::AAAA => "AAAA",
 			&Self::CNAME => "CNAME",
 			&Self::PTR => "PTR",
 			&Self::TXT => "TXT",
-			Self(2) => "NS",
-			Self(64) => "SVCB",
-			Self(65) => "HTTPS",
+			&Self::AAAA => "AAAA",
+			&Self::SVCB => "SVCB",
+			&Self::HTTPS => "HTTPS",
+			&Self(2) => "NS",
 			Self(t) => return write!(f, "{}", t),
 		};
 		write!(f, "{}", s)
 	}
 }
-impl TryFrom<&[u8]> for QType {
+impl TryFrom<&str> for QType {
 	type Error = ();
-	fn try_from(s: &[u8]) -> Result<Self, Self::Error> {
-		match s {
-			b"a" => Ok(Self::A),
-			_ => Err(()),
+	fn try_from(s: &str) -> Result<Self, Self::Error> {
+		match s.to_ascii_lowercase().as_str() {
+			"a" => Ok(Self::A),
+			"cname" => Ok(Self::CNAME),
+			"ptr" => Ok(Self::PTR),
+			"txt" => Ok(Self::TXT),
+			"aaaa" => Ok(Self::AAAA),
+			"svcb" => Ok(Self::SVCB),
+			"https" => Ok(Self::HTTPS),
+			_ => match u16::from_str(s) {
+				Ok(c) => Ok(Self(c)),
+				Err(_) => {
+					error!("invalid qtype: \"{s}\"");
+					Err(())
+				}
+			},
 		}
 	}
 }
