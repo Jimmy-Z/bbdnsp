@@ -16,28 +16,24 @@ fn main() -> std::io::Result<()> {
 		let (len, addr) = d.recv_from(&mut buf)?;
 		buf.resize(len, 0);
 		info!("{len} bytes from {addr}");
-		let msg = Msg::try_from(&mut buf);
-		if msg.is_err() {
-			buf.resize(MSG_LEN_MAX, 0);
-			continue;
+		if let Ok(mut msg) = Msg::try_from(&mut buf) {
+			eprintln!("{msg}");
+			match msg.get_query() {
+				Ok(q) => {
+					info!("{}", q);
+					handle(&mut msg, &q)
+				}
+				Err(MsgError::UnkOpCode(_)) => {
+					msg.deny(RCode::NOTIMP);
+				}
+				Err(MsgError::FormErr) => continue,
+				_ => unreachable!(),
+			};
+			info!("{} bytes to {addr}", msg.len());
+			// let msg = Msg::try_from((&mut buf[..], len)).unwrap();
+			eprintln!("{msg}");
+			d.send_to(&buf[..], addr)?;
 		}
-		let mut msg = msg.unwrap();
-		eprintln!("{msg}");
-		match msg.get_query() {
-			Ok(q) => {
-				info!("{}", q);
-				handle(&mut msg, &q)
-			}
-			Err(MsgError::UnkOpCode(_)) => {
-				msg.deny(RCode::NOTIMP);
-			}
-			Err(MsgError::FormErr) => continue,
-			_ => unreachable!(),
-		};
-		info!("{} bytes to {addr}", msg.len());
-		// let msg = Msg::try_from((&mut buf[..], len)).unwrap();
-		eprintln!("{msg}");
-		d.send_to(&buf[..], addr)?;
 		buf.resize(MSG_LEN_MAX, 0);
 	}
 }
