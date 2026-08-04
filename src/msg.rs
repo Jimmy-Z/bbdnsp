@@ -265,7 +265,7 @@ impl<'a> Msg<'a> {
 	fn qd_count(&self) -> u16 {
 		u16be(&self.buf[4..6])
 	}
-	fn an_count(&self) -> u16 {
+	pub fn an_count(&self) -> u16 {
 		u16be(&self.buf[6..8])
 	}
 	fn ns_count(&self) -> u16 {
