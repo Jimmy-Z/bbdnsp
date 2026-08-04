@@ -1,4 +1,4 @@
-use std::str::FromStr as _;
+use std::str::FromStr;
 
 use log::*;
 
@@ -83,9 +83,9 @@ impl std::fmt::Display for RCode {
 		write!(f, "{}", s)
 	}
 }
-impl TryFrom<&str> for RCode {
-	type Error = ();
-	fn try_from(s: &str) -> Result<Self, Self::Error> {
+impl FromStr for RCode {
+	type Err = ();
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s {
 			"noerror" => Ok(Self::NOERROR),
 			"formerr" => Ok(Self::FORMERR),
@@ -146,9 +146,9 @@ impl std::fmt::Display for QType {
 		write!(f, "{}", s)
 	}
 }
-impl TryFrom<&str> for QType {
-	type Error = ();
-	fn try_from(s: &str) -> Result<Self, Self::Error> {
+impl FromStr for QType {
+	type Err = ();
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s.to_ascii_lowercase().as_str() {
 			"a" => Ok(Self::A),
 			"cname" => Ok(Self::CNAME),
