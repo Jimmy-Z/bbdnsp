@@ -83,6 +83,23 @@ impl std::fmt::Display for RCode {
 		write!(f, "{}", s)
 	}
 }
+impl TryFrom<&str> for RCode {
+	type Error = ();
+	fn try_from(s: &str) -> Result<Self, Self::Error> {
+		match s {
+			"noerror" => Ok(Self::NOERROR),
+			"formerr" => Ok(Self::FORMERR),
+			"servfail" => Ok(Self::SERVFAIL),
+			"nxdomain" => Ok(Self::NXDOMAIN),
+			"notimp" => Ok(Self::NOTIMP),
+			"refused" => Ok(Self::REFUSED),
+			s => match u8::from_str(s) {
+				Ok(u) if u < 16 => Ok(Self(u)),
+				_ => Err(()),
+			},
+		}
+	}
+}
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub struct QClass(pub u16);
@@ -102,7 +119,7 @@ impl std::fmt::Display for QClass {
 	}
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QType(pub u16);
 impl QType {
 	pub const A: Self = Self(1);
